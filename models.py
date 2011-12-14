@@ -11,7 +11,9 @@ bills = Table('bills',metadata,
     Column('id',Integer,Sequence('bills_id_seq'),primary_key=True),
     
     Column('name',String),
-    Column('long_name',String)
+    Column('long_name',String),
+    Column('lang',String),
+    Column('translation_off', Integer, ForeignKey("bills.id"), default=None, nullable=True),
     )
 
 # bill revision

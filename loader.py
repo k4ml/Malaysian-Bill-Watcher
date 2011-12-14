@@ -15,8 +15,8 @@ class Bill(object):
     pass
     
     
-def load_page():
-    page = urllib2.urlopen('http://www.parlimen.gov.my/index.php?modload=document&uweb=dr&doc=bills&lang=en#')
+def load_page(lang="en"):
+    page = urllib2.urlopen('http://www.parlimen.gov.my/index.php?modload=document&uweb=dr&doc=bills&lang=%s#' % lang)
     soup = BeautifulSoup(page)
     table = soup.find('table',{'id':'mytable'})
     tr = table.find('tr')
@@ -51,25 +51,36 @@ def load_page():
         tmp = [setattr(b,r[0],r[1]) for r in result]
         yield b
             
-    
-def load_data():
+def load_data(lang="en"):
     print 'loading'
-    pg = load_page()
+    pg = load_page(lang)
     conn = engine.connect()
-    print 'here we go'
+
+    def has_translation(bill_id):
+        query = select([bills.c.id], bills.c.translation_off==bill_id)
+        res = conn.execute(query).fetchone()
+        if not res:
+            return False
+        return True
+
+    print 'here we go - %s' % lang
     for i in pg:
         message = ''
-        check = select([bills.c.id],bills.c.name == i.name)
+        check = select([bills.c.id, bills.c.translation_off],bills.c.name == i.name)
         result = conn.execute(check)
         res = result.fetchone()
         if not res:
-            bill = bills.insert().values(name=i.name,long_name=i.long_name)
+            bill = bills.insert().values(name=i.name,long_name=i.long_name, lang=lang)
             result = conn.execute(bill)
             pkey = result.inserted_primary_key[0]
         else:
-            pkey = res['id']
+            if res['translation_off'] or has_translation(res['id']):
+                pkey = res['id']
+            else:
+                bill = bills.insert().values(name=i.name,long_name=i.long_name, translation_off=res['id'], lang=lang)
+                result = conn.execute(bill)
+                pkey = result.inserted_primary_key[0]
         
-        # We check existing bills, remember we save link for bother the bills and revision
         check = select([bill_revs],and_(
             bill_revs.c.bill_id == int(pkey),
             bill_revs.c.year == int(i.year)))
@@ -86,7 +97,6 @@ def load_data():
         result = conn.execute(check)
         bill_rev = result.fetchone()
         exec_insert = False
-
         if not bill_rev:
             data['create_date'] = datetime.datetime.now()
             data['update_date'] = datetime.datetime.now()
@@ -95,26 +105,19 @@ def load_data():
             exec_insert = True
         else:
             data['update_date'] = datetime.datetime.now()
-            # because the bills is always under debate. so for the same year, and the status change, 
-            if bill_rev['status'] != i.status:
+            if bill_rev['year'] != int(i.year) or bill_rev['status'] != i.status:
                 revision = bill_revs.update().\
-                    where(
-                        and_(
-                            bill_revs.c.bill_id == int(pkey),
-                            bill_revs.c.year == int(i.year)
-                            )
-                        ).\
+                    where(bill_revs.c.bill_id==pkey).\
                     values(**data)
                 message = 'Bills Updated: %s, year %s %s'
                 exec_insert = True
         if exec_insert:
             result = conn.execute(revision)
-            
-        # stub of post to twitter
         url = settings.URL + '/detail/%d/' % (pkey)
         if message:
-            print message % (i.long_name, i.year,URL+url)
+            print message % (i.long_name, i.year, settings.URL+url)
 
 
 if __name__ == '__main__':
-    load_data()
+    load_data(lang='en')
+    load_data(lang='bm')
